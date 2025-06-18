@@ -1,0 +1,18 @@
+[Unit]
+Description=Classcord Discord-like Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=nedjb
+Group=nedjb
+WorkingDirectory=/home/nedjb/Documents/classcord-server
+ExecStart=/usr/bin/python3 /home/nedjb/Documents/classcord-server/server_classcord.py
+Restart=always
+RestartSec=1
+StandardOutput=append:/var/log/classcord/classcord.log
+StandardError=append:/var/log/classcord/classcord.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+[classcord]
+enabled = true
+filter = classcord
+logpath = /var/log/classcord/classcord.log
+maxretry = 3
+findtime = 600
+bantime = 3600

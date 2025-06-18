@@ -1,0 +1,13 @@
+/var/log/classcord/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 640 classcord classcord
+    sharedscripts
+    postrotate
+        systemctl restart classcord.service
+    endscript
+}
