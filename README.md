@@ -221,23 +221,72 @@ sudo journalctl -u classcord.service -f
 
 ---
 
-## 📂 Structure recommandée
+## 📙 Jour 4 – Jeudi : Fonctionnalités avancées et interface d’administration
+
+### Objectifs pédagogiques
+- Interface d'administration console
+- Authentification SQLite (hashée)
+- Gestion des canaux & multi-clients
+- Logs audit/debug
+
+### Nouveautés :
+- `server_classcord.py` refondu
+- `test_client.py`
+- Logs : `audit.log`, `debug.log`, `classcord.log`, `server_stdout.log`
+- `channel_switch` pour changer de canal
+
+---
+
+## 📒 Jour 5 – Vendredi : Exportation, outils d’analyse et intégration finale
+
+### Objectifs pédagogiques
+- Export CSV utilisateurs/messages
+- Console interactive avec menus
+- Menu console :
+```
+1. Voir les clients connectés
+2. Voir l'état des canaux
+3. Voir les utilisateurs et messages
+4. Quitter le serveur
+```
+
+### Scripts
+- `admin_view.py` (visualisation des données SQLite)
+- `start_server.sh` (exécution en arrière-plan)
+- Export CSV automatique dans `scripts/exports/`
+
+---
+
+## 🗂 Structure finale
+
 ```
 classcord-server/
 ├── server_classcord.py
+├── test_client.py
+├── admin_view.py
+├── start_server.sh
 ├── config/
+│   ├── database/
 │   ├── fail2ban/
 │   ├── logrotate/
 │   └── systemd/
-├── backups/
-└── scripts/
+├── logs/
+│   ├── audit.log
+│   ├── debug.log
+│   ├── classcord.log
+│   └── server_stdout.log
+├── scripts/
+│   └── exports/
+│       ├── messages_YYYY-MM-DD.csv
+│       └── users_YYYY-MM-DD.csv
 ```
 
 ---
 
-## ✅ Résumé des livrables attendus
-- Serveur opérationnel avec ou sans Docker
-- Logging, sécurité fail2ban et sauvegardes actives
-- README technique, doc_connexion.md et CONTAINERS.md
-- Code bien structuré et maintenable
+## ✅ Conclusion
+
+Projet complet, reproductible, prêt à être présenté en évaluation ou soutenance.  
+- Multi-clients / multi-canaux fonctionnels
+- Sécurité, journalisation, persistance des données
+- Exports automatisés pour analyse
 
