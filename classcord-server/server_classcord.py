@@ -1,127 +1,234 @@
 import socket
 import threading
 import json
-import pickle
+import sqlite3
 import os
 from datetime import datetime
 import logging
-import logging.handlers
-
-# Configure logging (version corrigée)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-# Créer un format pour les logs
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-# Créer le handler pour le fichier
-file_handler = logging.FileHandler('/var/log/classcord/classcord.log')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
+import hashlib
+import csv
 
 HOST = '0.0.0.0'
 PORT = 12345
-
-USER_FILE = 'users.pkl'
-CLIENTS = {}  # socket: username
-USERS = {}    # username: password
+DB_PATH = 'config/database/classcord.db'
+LOG_PATH = 'logs/audit.log'
+EXPORT_DIR = 'exports'
+CHANNELS = {'#général': [], '#dev': [], '#admin': []}
+CLIENTS = {}
 LOCK = threading.Lock()
 
-def load_users():
-    global USERS
-    if os.path.exists(USER_FILE):
-        with open(USER_FILE, 'rb') as f:
-            USERS = pickle.load(f)
-    logger.info(f"[INIT] Utilisateurs chargés: {list(USERS.keys())}")
+os.makedirs('logs', exist_ok=True)
+os.makedirs('config/database', exist_ok=True)
+os.makedirs(EXPORT_DIR, exist_ok=True)
+logging.basicConfig(filename='logs/classcord.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
-def save_users():
-    with open(USER_FILE, 'wb') as f:
-        pickle.dump(USERS, f)
-    logger.info("[SAVE] Utilisateurs sauvegardés.")
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def broadcast(message, sender_socket=None):
-    for client_socket, username in CLIENTS.items():
-        if client_socket != sender_socket:
+def init_database():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                channel TEXT,
+                content TEXT,
+                timestamp TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        conn.commit()
+
+def send_json(sock, data):
+    try:
+        sock.sendall((json.dumps(data) + '\n').encode())
+    except:
+        pass
+
+def broadcast(message, channel=None, exclude=None):
+    msg = json.dumps(message) + '\n'
+    targets = CHANNELS[channel] if channel else sum(CHANNELS.values(), [])
+    for client in targets:
+        if client != exclude:
             try:
-                client_socket.sendall((json.dumps(message) + '\n').encode())
-                logger.info(f"[ENVOI] Message envoyé à {username} : {message}")
-            except Exception as e:
-                logger.error(f"[ERREUR] Échec d'envoi à {username} : {e}")
+                client.sendall(msg.encode())
+            except:
+                disconnect_client(client)
 
-def handle_client(client_socket):
+def disconnect_client(sock):
+    with LOCK:
+        if sock in CLIENTS:
+            username = CLIENTS[sock]['username']
+            channel = CLIENTS[sock]['channel']
+            CHANNELS[channel].remove(sock)
+            del CLIENTS[sock]
+            broadcast({'type': 'status', 'user': username, 'state': 'offline'}, channel=channel)
+    try:
+        sock.close()
+    except:
+        pass
+
+def handle_client(sock):
     buffer = ''
-    username = None
-    address = client_socket.getpeername()
-    logger.info(f"[CONNEXION] Nouvelle connexion depuis {address}")
     try:
         while True:
-            data = client_socket.recv(1024).decode()
+            data = sock.recv(1024).decode()
             if not data:
                 break
             buffer += data
             while '\n' in buffer:
                 line, buffer = buffer.split('\n', 1)
-                logger.info(f"[RECU] {address} >> {line}")
                 msg = json.loads(line)
-
-                if msg['type'] == 'register':
-                    with LOCK:
-                        if msg['username'] in USERS:
-                            response = {'type': 'error', 'message': 'Username already exists.'}
+                if msg['type'] == 'login':
+                    with sqlite3.connect(DB_PATH) as conn:
+                        cur = conn.execute('SELECT id, password FROM users WHERE username=?', (msg['username'],))
+                        row = cur.fetchone()
+                        if row and row[1] == hash_password(msg['password']):
+                            CLIENTS[sock] = {'username': msg['username'], 'channel': '#général'}
+                            CHANNELS['#général'].append(sock)
+                            send_json(sock, {'type': 'login', 'status': 'ok'})
+                            broadcast({'type': 'status', 'user': msg['username'], 'state': 'online'}, '#général', sock)
                         else:
-                            USERS[msg['username']] = msg['password']
-                            save_users()
-                            response = {'type': 'register', 'status': 'ok'}
-                        client_socket.sendall((json.dumps(response) + '\n').encode())
-
-                elif msg['type'] == 'login':
-                    with LOCK:
-                        if USERS.get(msg['username']) == msg['password']:
-                            username = msg['username']
-                            CLIENTS[client_socket] = username
-                            response = {'type': 'login', 'status': 'ok'}
-                            client_socket.sendall((json.dumps(response) + '\n').encode())
-                            broadcast({'type': 'status', 'user': username, 'state': 'online'}, client_socket)
-                            logger.info(f"[LOGIN] {username} connecté")
-                        else:
-                            response = {'type': 'error', 'message': 'Login failed.'}
-                            client_socket.sendall((json.dumps(response) + '\n').encode())
-
-                elif msg['type'] == 'message':
-                    if not username:
-                        username = msg.get('from', 'invité')
-                        with LOCK:
-                            CLIENTS[client_socket] = username
-                        logger.info(f"[INFO] Connexion invitée détectée : {username}")
-
-                    msg['from'] = username
-                    msg['timestamp'] = datetime.now().isoformat()
-                    logger.info(f"[MSG] {username} >> {msg['content']}")
-                    broadcast(msg, client_socket)
-
-                elif msg['type'] == 'status' and username:
-                    broadcast({'type': 'status', 'user': username, 'state': msg['state']}, client_socket)
-                    logger.info(f"[STATUS] {username} est maintenant {msg['state']}")
-
+                            send_json(sock, {'type': 'error', 'message': 'Identifiants invalides'})
+                elif msg['type'] == 'register':
+                    with sqlite3.connect(DB_PATH) as conn:
+                        try:
+                            conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (msg['username'], hash_password(msg['password'])))
+                            conn.commit()
+                            send_json(sock, {'type': 'register', 'status': 'ok'})
+                        except sqlite3.IntegrityError:
+                            send_json(sock, {'type': 'error', 'message': 'Utilisateur déjà existant'})
+                elif msg['type'] == 'message' and sock in CLIENTS:
+                    username = CLIENTS[sock]['username']
+                    channel = CLIENTS[sock]['channel']
+                    timestamp = datetime.now().isoformat()
+                    broadcast({'type': 'message', 'from': username, 'channel': channel, 'content': msg['content'], 'timestamp': timestamp}, channel)
+                    with sqlite3.connect(DB_PATH) as conn:
+                        cur = conn.execute('SELECT id FROM users WHERE username=?', (username,))
+                        user_id = cur.fetchone()[0]
+                        conn.execute('INSERT INTO messages (user_id, channel, content, timestamp) VALUES (?, ?, ?, ?)',
+                                     (user_id, channel, msg['content'], timestamp))
+                        conn.commit()
+                elif msg['type'] == 'channel_switch' and sock in CLIENTS:
+                    old = CLIENTS[sock]['channel']
+                    new = msg['channel']
+                    if new in CHANNELS:
+                        CHANNELS[old].remove(sock)
+                        CHANNELS[new].append(sock)
+                        CLIENTS[sock]['channel'] = new
+                        send_json(sock, {'type': 'info', 'message': f'Vous avez rejoint {new}'})
+                    else:
+                        send_json(sock, {'type': 'error', 'message': 'Canal inexistant'})
     except Exception as e:
-        logger.error(f'[ERREUR] Problème avec {address} ({username}): {e}')
+        logging.error(f"Erreur client: {e}")
     finally:
-        if username:
-            broadcast({'type': 'status', 'user': username, 'state': 'offline'}, client_socket)
-        with LOCK:
-            CLIENTS.pop(client_socket, None)
-        client_socket.close()
-        logger.info(f"[DECONNEXION] {address} déconnecté")
+        disconnect_client(sock)
+
+def export_data():
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    msg_path = os.path.join(EXPORT_DIR, f'messages_{date_str}.csv')
+    users_path = os.path.join(EXPORT_DIR, f'users_{date_str}.csv')
+
+    with sqlite3.connect(DB_PATH) as conn:
+        messages = conn.execute('''
+            SELECT users.username, messages.channel, messages.content, messages.timestamp
+            FROM messages
+            JOIN users ON messages.user_id = users.id
+            ORDER BY messages.timestamp DESC
+        ''').fetchall()
+        with open(msg_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Utilisateur', 'Canal', 'Contenu', 'Horodatage'])
+            writer.writerows(messages)
+
+        users = conn.execute('SELECT id, username FROM users').fetchall()
+        with open(users_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['ID', "Nom d'utilisateur"])
+            writer.writerows(users)
+
+    print(f"[EXPORT] Messages exportés dans {msg_path}")
+    print(f"[EXPORT] Utilisateurs exportés dans {users_path}")
+
+def afficher_logs_audit():
+    print("\n📜 Derniers logs audit :")
+    try:
+        with open(LOG_PATH, 'r') as f:
+            lines = f.readlines()[-10:]
+            for l in lines:
+                print(l.strip())
+    except FileNotFoundError:
+        print("Aucun fichier de log trouvé.")
+
+def admin_console():
+    while True:
+        print("\n=== Console Admin ===")
+        print("1. Voir les clients connectés")
+        print("2. Voir l'état des canaux")
+        print("3. Voir les utilisateurs et messages")
+        print("4. Quitter le serveur")
+        print("5. Exporter les données (messages + utilisateurs)")
+        print("6. Afficher les logs audit")
+        choix = input("Choix : ")
+        if choix == '1':
+            print("\n[Clients connectés] :")
+            for sock, data in CLIENTS.items():
+                print(f"- {data['username']} ({data['channel']})")
+        elif choix == '2':
+            print("\n[Canaux] :")
+            for name, clients in CHANNELS.items():
+                print(f"{name} : {len(clients)} client(s)")
+        elif choix == '3':
+            afficher_donnees()
+        elif choix == '4':
+            print("Arrêt du serveur...")
+            broadcast({'type': 'server_shutdown', 'message': 'Le serveur va être déconnecté.'})
+            for sock in list(CLIENTS):
+                try:
+                    sock.close()
+                except:
+                    pass
+            os._exit(0)
+        elif choix == '5':
+            export_data()
+        elif choix == '6':
+            afficher_logs_audit()
+        else:
+            print("Choix invalide")
+
+def afficher_donnees():
+    with sqlite3.connect(DB_PATH) as conn:
+        users = conn.execute('SELECT id, username FROM users').fetchall()
+        print("\n📋 Utilisateurs :")
+        for u in users:
+            print(f"- ID: {u[0]} | Nom: {u[1]}")
+
+        messages = conn.execute('SELECT user_id, channel, content, timestamp FROM messages ORDER BY id DESC LIMIT 10').fetchall()
+        print("\n💬 Derniers messages :")
+        for m in messages:
+            print(f"[{m[3]}] (user {m[0]}) #{m[1]}: {m[2]}")
 
 def main():
-    load_users()
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((HOST, PORT))
-    server_socket.listen()
-    logger.info(f"[DEMARRAGE] Serveur en écoute sur {HOST}:{PORT}")
+    init_database()
+    print("[INIT] Base de données initialisée")
+    logging.info("Base de données initialisée avec succès")
+    threading.Thread(target=admin_console, daemon=True).start()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((HOST, PORT))
+    server.listen(5)
+    print(f"[SERVEUR] En écoute sur {HOST}:{PORT}")
     while True:
-        client_socket, addr = server_socket.accept()
-        threading.Thread(target=handle_client, args=(client_socket,), daemon=True).start()
+        client, _ = server.accept()
+        threading.Thread(target=handle_client, args=(client,), daemon=True).start()
 
 if __name__ == '__main__':
     main()

@@ -1,71 +1,75 @@
 import socket
 import json
 import threading
-import time
 
-def send_json_message(sock, message):
-    json_data = json.dumps(message)
-    sock.send((json_data + '\n').encode('utf-8'))
+HOST = '127.0.0.1'
+PORT = 12345
 
-def receive_messages(sock):
+def listen_for_messages(sock):
+    buffer = ''
     while True:
         try:
-            response = sock.recv(1024).decode('utf-8')
-            if response:
-                print(f"\nMessage reçu: {response}")
-        except:
+            data = sock.recv(1024).decode()
+            if not data:
+                break
+            buffer += data
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                msg = json.loads(line)
+                print("\n[REÇU]", msg)
+        except Exception as e:
+            print("[ERREUR RECEPTION]", e)
             break
 
-def start_receiver(sock):
-    receiver_thread = threading.Thread(target=receive_messages, args=(sock,))
-    receiver_thread.daemon = True
-    receiver_thread.start()
-    return receiver_thread
+def send_and_receive(sock, data):
+    sock.sendall((json.dumps(data) + '\n').encode())
 
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect(('localhost', 12345))
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((HOST, PORT))
 
-try:
-    # Démarrer le thread de réception
-    receiver_thread = start_receiver(client)
+    print("1. S'enregistrer")
+    print("2. Se connecter")
+    choice = input("Choix : ")
 
-    # Register first
-    register_message = {
-        "type": "register",
-        "username": "testuser",
-        "password": "testpass"
-    }
-    
-    print("\nEnvoi demande d'enregistrement...")
-    send_json_message(client, register_message)
-    time.sleep(1)  # Attendre la réponse
+    username = input("Nom d'utilisateur : ")
+    password = input("Mot de passe : ")
 
-    # Then login
-    login_message = {
-        "type": "login",
-        "username": "testuser",
-        "password": "testpass"
-    }
-    
-    print("\nEnvoi demande de connexion...")
-    send_json_message(client, login_message)
-    time.sleep(1)  # Attendre la réponse
+    if choice == '1':
+        send_and_receive(sock, {
+            "type": "register",
+            "username": username,
+            "password": password
+        })
 
-    # Boucle principale pour envoyer des messages
-    while True:
-        message = input("\nEntrez votre message (ou 'quit' pour quitter): ")
-        if message.lower() == 'quit':
-            break
-            
-        chat_message = {
-            "type": "message",
-            "content": message
-        }
-        send_json_message(client, chat_message)
+        print("Connexion automatique après enregistrement...")
+        send_and_receive(sock, {
+            "type": "login",
+            "username": username,
+            "password": password
+        })
+    else:
+        send_and_receive(sock, {
+            "type": "login",
+            "username": username,
+            "password": password
+        })
 
-except KeyboardInterrupt:
-    print("\nFermeture du client...")
-except Exception as e:
-    print(f"Erreur: {e}")
-finally:
-    client.close()
+    # Démarre l’écoute des messages
+    threading.Thread(target=listen_for_messages, args=(sock,), daemon=True).start()
+
+    # Envoi en boucle
+    try:
+        while True:
+            msg = input()
+            if msg.strip():
+                send_and_receive(sock, {
+                    "type": "message",
+                    "content": msg
+                })
+    except KeyboardInterrupt:
+        print("Déconnexion...")
+        sock.close()
+
+if __name__ == '__main__':
+    main()
