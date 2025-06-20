@@ -535,4 +535,3 @@ classcord-server/
 
 - Projet prêt à déployer et documenté
 - Fonctionnalités avancées : multi-clients, sécurité, logging, base de données
-- Livrables disponibles pour évaluation
