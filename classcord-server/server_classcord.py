@@ -11,7 +11,7 @@ import csv
 HOST = '0.0.0.0'
 PORT = 12345
 DB_PATH = 'config/database/classcord.db'
-LOG_PATH = 'logs/audit.log'
+AUDIT_LOG = 'logs/audit.log'
 EXPORT_DIR = 'exports'
 CHANNELS = {'#général': [], '#dev': [], '#admin': []}
 CLIENTS = {}
@@ -20,8 +20,16 @@ LOCK = threading.Lock()
 os.makedirs('logs', exist_ok=True)
 os.makedirs('config/database', exist_ok=True)
 os.makedirs(EXPORT_DIR, exist_ok=True)
-logging.basicConfig(filename='logs/classcord.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(
+    filename=AUDIT_LOG,
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+def log_audit(msg):
+    logging.info(msg)
+    print("[AUDIT]", msg)
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -87,7 +95,18 @@ def handle_client(sock):
             while '\n' in buffer:
                 line, buffer = buffer.split('\n', 1)
                 msg = json.loads(line)
-                if msg['type'] == 'login':
+
+                if msg['type'] == 'register':
+                    with sqlite3.connect(DB_PATH) as conn:
+                        try:
+                            conn.execute('INSERT INTO users (username, password) VALUES (?, ?)',
+                                         (msg['username'], hash_password(msg['password'])))
+                            conn.commit()
+                            send_json(sock, {'type': 'register', 'status': 'ok'})
+                        except sqlite3.IntegrityError:
+                            send_json(sock, {'type': 'error', 'message': 'Utilisateur déjà existant'})
+
+                elif msg['type'] == 'login':
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.execute('SELECT id, password FROM users WHERE username=?', (msg['username'],))
                         row = cur.fetchone()
@@ -95,28 +114,24 @@ def handle_client(sock):
                             CLIENTS[sock] = {'username': msg['username'], 'channel': '#général'}
                             CHANNELS['#général'].append(sock)
                             send_json(sock, {'type': 'login', 'status': 'ok'})
-                            broadcast({'type': 'status', 'user': msg['username'], 'state': 'online'}, '#général', sock)
+                            broadcast({'type': 'status', 'user': msg['username'], 'state': 'online'}, '#général', exclude=sock)
+                            log_audit(f"{msg['username']} connecté depuis {sock.getpeername()}")
                         else:
                             send_json(sock, {'type': 'error', 'message': 'Identifiants invalides'})
-                elif msg['type'] == 'register':
-                    with sqlite3.connect(DB_PATH) as conn:
-                        try:
-                            conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (msg['username'], hash_password(msg['password'])))
-                            conn.commit()
-                            send_json(sock, {'type': 'register', 'status': 'ok'})
-                        except sqlite3.IntegrityError:
-                            send_json(sock, {'type': 'error', 'message': 'Utilisateur déjà existant'})
+
                 elif msg['type'] == 'message' and sock in CLIENTS:
                     username = CLIENTS[sock]['username']
                     channel = CLIENTS[sock]['channel']
                     timestamp = datetime.now().isoformat()
-                    broadcast({'type': 'message', 'from': username, 'channel': channel, 'content': msg['content'], 'timestamp': timestamp}, channel)
+                    broadcast({'type': 'message', 'from': username, 'channel': channel, 'content': msg['content'], 'timestamp': timestamp}, channel, exclude=sock)
                     with sqlite3.connect(DB_PATH) as conn:
                         cur = conn.execute('SELECT id FROM users WHERE username=?', (username,))
-                        user_id = cur.fetchone()[0]
-                        conn.execute('INSERT INTO messages (user_id, channel, content, timestamp) VALUES (?, ?, ?, ?)',
-                                     (user_id, channel, msg['content'], timestamp))
-                        conn.commit()
+                        user_id = cur.fetchone()
+                        if user_id:
+                            conn.execute('INSERT INTO messages (user_id, channel, content, timestamp) VALUES (?, ?, ?, ?)',
+                                         (user_id[0], channel, msg['content'], timestamp))
+                            conn.commit()
+
                 elif msg['type'] == 'channel_switch' and sock in CLIENTS:
                     old = CLIENTS[sock]['channel']
                     new = msg['channel']
@@ -161,12 +176,30 @@ def export_data():
 def afficher_logs_audit():
     print("\n📜 Derniers logs audit :")
     try:
-        with open(LOG_PATH, 'r') as f:
+        with open(AUDIT_LOG, 'r') as f:
             lines = f.readlines()[-10:]
             for l in lines:
                 print(l.strip())
     except FileNotFoundError:
         print("Aucun fichier de log trouvé.")
+
+def envoyer_message_admin():
+    canal = input("Sur quel canal envoyer ? (ex: #général, all): ").strip()
+    texte = input("Contenu du message : ").strip()
+    if texte:
+        msg = {
+            'type': 'message',
+            'from': 'ADMIN',
+            'channel': canal,
+            'content': texte,
+            'timestamp': datetime.now().isoformat()
+        }
+        if canal == 'all':
+            broadcast(msg)
+        elif canal in CHANNELS:
+            broadcast(msg, channel=canal)
+        else:
+            print("Canal invalide")
 
 def admin_console():
     while True:
@@ -177,6 +210,7 @@ def admin_console():
         print("4. Quitter le serveur")
         print("5. Exporter les données (messages + utilisateurs)")
         print("6. Afficher les logs audit")
+        print("7. Envoyer un message (admin)")
         choix = input("Choix : ")
         if choix == '1':
             print("\n[Clients connectés] :")
@@ -201,6 +235,8 @@ def admin_console():
             export_data()
         elif choix == '6':
             afficher_logs_audit()
+        elif choix == '7':
+            envoyer_message_admin()
         else:
             print("Choix invalide")
 
@@ -218,8 +254,7 @@ def afficher_donnees():
 
 def main():
     init_database()
-    print("[INIT] Base de données initialisée")
-    logging.info("Base de données initialisée avec succès")
+    log_audit("Base de données initialisée")
     threading.Thread(target=admin_console, daemon=True).start()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -227,7 +262,8 @@ def main():
     server.listen(5)
     print(f"[SERVEUR] En écoute sur {HOST}:{PORT}")
     while True:
-        client, _ = server.accept()
+        client, addr = server.accept()
+        print(f"[NOUVELLE CONNEXION] {addr}")
         threading.Thread(target=handle_client, args=(client,), daemon=True).start()
 
 if __name__ == '__main__':
