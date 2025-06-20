@@ -221,44 +221,292 @@ sudo journalctl -u classcord.service -f
 
 ---
 
-## 📙 Jour 4 – Jeudi : Fonctionnalités avancées et interface d’administration
 
-### Objectifs pédagogiques
-- Interface d'administration console
-- Authentification SQLite (hashée)
-- Gestion des canaux & multi-clients
-- Logs audit/debug
+## 📘 Jour 4 – Jeudi : Améliorations fonctionnelles, personnalisation et administration
 
-### Nouveautés :
-- `server_classcord.py` refondu
-- `test_client.py`
-- Logs : `audit.log`, `debug.log`, `classcord.log`, `server_stdout.log`
-- `channel_switch` pour changer de canal
+### 🎯 Objectifs pédagogiques
+- Gérer les canaux de discussion côté serveur
+- Stocker de façon persistante les utilisateurs et messages
+- Mettre en place un menu administrateur
+- Créer un script d’export CSV
+- Gérer la déconnexion des clients et l’arrêt du serveur
 
 ---
 
-## 📒 Jour 5 – Vendredi : Exportation, outils d’analyse et intégration finale
+### 🧠 1. Gestion des canaux
 
-### Objectifs pédagogiques
-- Export CSV utilisateurs/messages
-- Console interactive avec menus
-- Menu console :
+Structure créée dans le code :
+```python
+CHANNELS = {'#général': [], '#dev': [], '#admin': []}
 ```
-1. Voir les clients connectés
-2. Voir l'état des canaux
+
+Adaptation du serveur pour :
+- Attribuer un canal à chaque client connecté
+- Diffuser uniquement aux clients présents dans le même canal
+
+Extrait :
+```python
+def broadcast(message, channel=None, exclude=None):
+    targets = CHANNELS[channel] if channel else sum(CHANNELS.values(), [])
+    for client in targets:
+        if client != exclude:
+            ...
+```
+
+---
+
+### 🛠️ 2. Stockage persistant avec SQLite
+
+Commandes :
+```bash
+mkdir -p config/database
+```
+
+Initialisation automatique dans le script :
+```python
+DB_PATH = 'config/database/classcord.db'
+```
+
+Création des tables :
+```sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL
+);
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    channel TEXT,
+    content TEXT,
+    timestamp TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+```
+
+Les mots de passe sont hachés en SHA256 :
+```python
+def hash_password(pwd):
+    return hashlib.sha256(pwd.encode()).hexdigest()
+```
+
+---
+
+### 🖥️ 3. Console administrateur (menu intégré)
+
+Ajout dans le serveur :
+```python
+def admin_console():
+    while True:
+        print("1. Voir les clients connectés")
+        print("2. Voir l'état des canaux")
+        print("3. Voir les utilisateurs et messages")
+        ...
+```
+
+Accessible en parallèle via un `thread` :
+```python
+threading.Thread(target=admin_console, daemon=True).start()
+```
+
+---
+
+### 📋 4. Script `admin_view.py`
+
+Fonction :
+- Affiche les utilisateurs et les messages récents
+- Utilise `sqlite3` et `tabulate`
+
+Installation de la dépendance :
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install tabulate
+```
+
+Utilisation :
+```bash
+python3 admin_view.py
+```
+
+---
+
+### 📦 5. Export CSV des messages et utilisateurs
+
+Fichiers générés automatiquement :
+- `scripts/exports/messages_export_YYYY-MM-DD.csv`
+- `scripts/exports/users_export_YYYY-MM-DD.csv`
+
+Structure créée :
+```bash
+mkdir -p scripts/exports
+```
+
+Code :
+```python
+with open(f"scripts/exports/messages_export_{date.today()}.csv", "w") as f:
+    writer = csv.writer(f)
+    ...
+```
+
+---
+
+### 🔁 6. Notification des clients à l'arrêt
+
+Lorsqu’un administrateur arrête le serveur :
+```python
+for sock in list(CLIENTS.keys()):
+    try:
+        send_json(sock, {"type": "shutdown", "message": "Serveur arrêté."})
+    except:
+        pass
+```
+
+Les clients reçoivent un message de fin et ferment leur socket.
+
+---
+
+### ✅ Résumé des livrables
+- Serveur avec gestion de canaux
+- Authentification sécurisée par hash
+- Menu administrateur intégré
+- Base de données SQLite fonctionnelle
+- Script `admin_view.py` utilisable
+- Export CSV automatisé
+
+---
+## 📘 Jour 5 – Vendredi : Finalisation, automatisation système et bilan
+
+### 🎯 Objectifs pédagogiques
+- Intégrer le serveur dans le système (systemd)
+- Automatiser le démarrage et le redémarrage en cas d’échec
+- Vérifier la stabilité multi-clients
+- Documenter tout le projet de manière claire
+- Exporter les données (utilisateurs, messages)
+- S’assurer de la sécurité et du suivi du serveur
+
+---
+
+### 🛠️ 1. Service systemd
+
+Création du fichier :
+```bash
+sudo nano /etc/systemd/system/classcord.service
+```
+
+Contenu :
+```ini
+[Unit]
+Description=Serveur ClassCord
+After=network.target
+
+[Service]
+User=classcord
+WorkingDirectory=/home/classcord/classcord-server
+ExecStart=/usr/bin/python3 /home/classcord/classcord-server/server_classcord.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Commandes :
+```bash
+sudo systemctl daemon-reexec
+sudo systemctl enable --now classcord.service
+```
+
+Vérification :
+```bash
+sudo systemctl status classcord.service
+sudo journalctl -u classcord.service -f
+```
+
+---
+
+### 🧪 2. Test multi-clients (fonctionnel)
+
+- Lancement simultané de plusieurs `test_client.py`
+- Chaque client peut :
+  - s’enregistrer
+  - se connecter
+  - envoyer/recevoir des messages en temps réel
+  - changer de canal
+
+Exemple de réception :
+```json
+{ "type": "message", "from": "lia", "channel": "#général", "content": "salut leo", "timestamp": "..." }
+```
+
+---
+
+### 📤 3. Exportation des données
+
+Dans l’interface console (admin) :
+```text
 3. Voir les utilisateurs et messages
-4. Quitter le serveur
 ```
 
-### Scripts
-- `admin_view.py` (visualisation des données SQLite)
-- `start_server.sh` (exécution en arrière-plan)
-- Export CSV automatique dans `scripts/exports/`
+➡️ Génère :
+- `scripts/exports/messages_export_2025-06-20.csv`
+- `scripts/exports/users_export_2025-06-20.csv`
 
 ---
 
-## 🗂 Structure finale
+### 🧾 4. Journalisation complète
 
+| Fichier                     | Contenu                                                                 |
+|----------------------------|-------------------------------------------------------------------------|
+| `logs/classcord.log`       | Activité standard du serveur                                            |
+| `logs/audit.log`           | Actions administratives (alerte, changement canal, arrêt serveur...)   |
+| `logs/debug.log`           | Infos détaillées, erreurs de threads, exceptions techniques             |
+| `logs/server_stdout.log`   | Sortie standard du serveur (si lancé via `start_server.sh`)            |
+
+Commandes utiles :
+```bash
+tail -f logs/classcord.log
+tail -f logs/audit.log
+```
+
+---
+
+### 🧹 5. Nettoyage et sécurité finale
+
+- Suppression de `users.pkl` si encore présent
+```bash
+rm users.pkl
+```
+
+- Vérification des permissions sur la base SQLite :
+```bash
+chmod 600 config/database/classcord.db
+```
+
+- Vérification des ports :
+```bash
+ss -tulpn | grep 12345
+```
+
+- Activation pare-feu :
+```bash
+sudo ufw allow 12345/tcp
+sudo ufw enable
+```
+
+---
+
+### ✅ Résumé des livrables
+- Serveur stable et multi-clients
+- Données utilisateurs/messages persistantes
+- Export CSV automatisé
+- Interface console opérationnelle
+- Démarrage automatique avec systemd
+- Journalisation complète et filtrable
+
+---
+
+## 🗂 Arborescence projet
 ```
 classcord-server/
 ├── server_classcord.py
@@ -285,8 +533,6 @@ classcord-server/
 
 ## ✅ Conclusion
 
-Projet complet, reproductible, prêt à être présenté en évaluation ou soutenance.  
-- Multi-clients / multi-canaux fonctionnels
-- Sécurité, journalisation, persistance des données
-- Exports automatisés pour analyse
-
+- Projet prêt à déployer et documenté
+- Fonctionnalités avancées : multi-clients, sécurité, logging, base de données
+- Livrables disponibles pour évaluation
