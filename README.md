@@ -128,14 +128,27 @@ sudo systemctl enable --now classcord.service
 À placer à la racine du dossier `classcord-docker` :
 
 ```dockerfile
+# Utilise une image Python légère
 FROM python:3.11-slim
 
+# Définir le dossier de travail
 WORKDIR /app
-COPY . /app
 
-RUN pip install --no-cache-dir -r requirements.txt || true
+# Copier le code source et la base de données minimale
+COPY server_classcord.py .
+COPY config/database/ ./config/database/
+COPY logs/ ./logs/
 
+# Crée les dossiers nécessaires (au cas où)
+RUN mkdir -p exports config/database logs
+
+# Installer les dépendances (si besoin ajouter tabulate ou autres dans requirements.txt)
+# Ici aucune dépendance externe obligatoire pour le serveur simple
+
+# Expose le port utilisé par le serveur
 EXPOSE 12345
+
+# Démarrer le serveur
 CMD ["python", "server_classcord.py"]
 ```
 
@@ -144,13 +157,20 @@ CMD ["python", "server_classcord.py"]
 ## 🧱 5. Fichier `docker-compose.yml`
 
 ```yaml
-version: '3'
+version: '3.9'
+
 services:
   classcord:
     build: .
+    container_name: classcord-server
     ports:
       - "12345:12345"
+    volumes:
+      - ./logs:/app/logs
+      - ./config/database:/app/config/database
+      - ./exports:/app/exports
     restart: unless-stopped
+
 ```
 
 Ce fichier permet de déployer le conteneur avec une seule commande :
