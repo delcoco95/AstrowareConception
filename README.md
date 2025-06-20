@@ -101,14 +101,20 @@ Créer un fichier `classcord.service` :
 ```ini
 # /etc/systemd/system/classcord.service
 [Unit]
-Description=Serveur ClassCord
+Description=Classcord Discord-like Service
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
-User=classcord
-WorkingDirectory=/home/classcord/classcord-server
-ExecStart=/usr/bin/python3 /home/classcord/classcord-server/server_classcord.py
-Restart=on-failure
+Type=simple
+User=nedjb
+Group=nedjb
+WorkingDirectory=/home/nedjb/Documents/classcord-server
+ExecStart=/usr/bin/python3 /home/nedjb/Documents/classcord-server/server_classcord.py
+Restart=always
+RestartSec=1
+StandardOutput=append:/var/log/classcord/classcord.log
+StandardError=append:/var/log/classcord/classcord.log
 
 [Install]
 WantedBy=multi-user.target
@@ -222,7 +228,7 @@ Fichier `/etc/logrotate.d/classcord` :
     delaycompress
     missingok
     notifempty
-    create 644 classcord classcord
+    create 640 classcord classcord
     postrotate
         systemctl restart classcord.service
     endscript
@@ -447,14 +453,20 @@ sudo nano /etc/systemd/system/classcord.service
 Contenu :
 ```ini
 [Unit]
-Description=Serveur ClassCord
+Description=Classcord Discord-like Service
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
-User=classcord
-WorkingDirectory=/home/classcord/classcord-server
-ExecStart=/usr/bin/python3 /home/classcord/classcord-server/server_classcord.py
-Restart=on-failure
+Type=simple
+User=nedjb
+Group=nedjb
+WorkingDirectory=/home/nedjb/Documents/classcord-server
+ExecStart=/usr/bin/python3 /home/nedjb/Documents/classcord-server/server_classcord.py
+Restart=always
+RestartSec=1
+StandardOutput=append:/var/log/classcord/classcord.log
+StandardError=append:/var/log/classcord/classcord.log
 
 [Install]
 WantedBy=multi-user.target
