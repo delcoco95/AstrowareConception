@@ -64,29 +64,42 @@ sudo ufw allow 12345/tcp
 
 ## 📗 Jour 2 - Mardi : Déploiement réseau, automatisation et Docker
 
-### Objectifs pédagogiques
-- Déployer le serveur sur réseau pédagogique
-- Automatiser avec systemd
-- Conteneuriser avec Docker
-- Documenter l'accès
+## 🎯 Objectifs pédagogiques
+- Déployer le serveur Classcord sur un réseau local ou pédagogique
+- Automatiser son lancement avec `systemd`
+- Créer une version conteneurisée avec Docker
+- Documenter les chemins et commandes pour l’accès
 
-### 1. Vérification de l’écoute réseau
+---
+
+## 🔌 1. Vérification de l’écoute réseau
+
 ```bash
 sudo ufw allow 12345/tcp
 ss -tulpn | grep 12345
-hostname -I
+hostname -I  # Vérifie l’adresse IP de la machine
 ```
 
-### 2. Création d’un utilisateur dédié
+---
+
+## 👤 2. Création d’un utilisateur système dédié
+
 ```bash
 sudo useradd -m classcord
 sudo passwd classcord
 su - classcord
 ```
 
-### 3. Création du service systemd
-Fichier : `/etc/systemd/system/classcord.service`
+Cela permet d’isoler l’exécution du serveur.
+
+---
+
+## ⚙️ 3. Création du service `systemd`
+
+Créer un fichier `classcord.service` :
+
 ```ini
+# /etc/systemd/system/classcord.service
 [Unit]
 Description=Serveur ClassCord
 After=network.target
@@ -101,23 +114,35 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-Activation :
+### Activation :
+
 ```bash
 sudo systemctl daemon-reexec
 sudo systemctl enable --now classcord.service
 ```
 
-### 4. Dockerfile (racine du projet)
+---
+
+## 🐳 4. Création d’un `Dockerfile`
+
+À placer à la racine du dossier `classcord-docker` :
+
 ```dockerfile
 FROM python:3.11-slim
+
 WORKDIR /app
 COPY . /app
+
 RUN pip install --no-cache-dir -r requirements.txt || true
+
 EXPOSE 12345
 CMD ["python", "server_classcord.py"]
 ```
 
-### 5. docker-compose.yml
+---
+
+## 🧱 5. Fichier `docker-compose.yml`
+
 ```yaml
 version: '3'
 services:
@@ -128,15 +153,19 @@ services:
     restart: unless-stopped
 ```
 
-### 6. Tests
+Ce fichier permet de déployer le conteneur avec une seule commande :
+
 ```bash
-docker build -t classcord-server .
-docker run -it --rm -p 12345:12345 classcord-server
+docker compose up --build
 ```
 
-Fichiers à produire : `doc_connexion.md`, `CONTAINERS.md`
-
 ---
+
+## 🗂️ Fichiers produits
+
+- `classcord.service` (dans `/etc/systemd/system`)
+- `Dockerfile`
+- `docker-compose.yml`
 
 ## 📖 Jour 3 - Mercredi : Sécurisation, journalisation et monitoring
 
