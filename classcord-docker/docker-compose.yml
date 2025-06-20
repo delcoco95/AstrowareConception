@@ -1,15 +1,13 @@
-version: '3'
+version: '3.9'
+
 services:
   classcord:
     build: .
+    container_name: classcord-server
     ports:
       - "12345:12345"
     volumes:
-      - .:/app
-    networks:
-      - classcord-net
+      - ./logs:/app/logs
+      - ./config/database:/app/config/database
+      - ./exports:/app/exports
     restart: unless-stopped
-
-networks:
-  classcord-net:
-    driver: bridge

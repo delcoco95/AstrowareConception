@@ -1,9 +1,22 @@
-FROM python:3.9-slim
+# Utilise une image Python légère
+FROM python:3.11-slim
 
+# Définir le dossier de travail
 WORKDIR /app
 
+# Copier le code source et la base de données minimale
 COPY server_classcord.py .
+COPY config/database/ ./config/database/
+COPY logs/ ./logs/
 
+# Crée les dossiers nécessaires (au cas où)
+RUN mkdir -p exports config/database logs
+
+# Installer les dépendances (si besoin ajouter tabulate ou autres dans requirements.txt)
+# Ici aucune dépendance externe obligatoire pour le serveur simple
+
+# Expose le port utilisé par le serveur
 EXPOSE 12345
 
-CMD ["python", "-u", "server_classcord.py"]
+# Démarrer le serveur
+CMD ["python", "server_classcord.py"]
